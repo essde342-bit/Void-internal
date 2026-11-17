@@ -3,9 +3,7 @@
 #include <d3d11.h>
 #include <cstdint>
 #include <cstring>
-
-struct Config; // fwd
-extern Config g_cfg;
+#include "config.h"
 
 namespace gfx {
     void draw_rect_filled(float x, float y, float w, float h, uint32_t col);
