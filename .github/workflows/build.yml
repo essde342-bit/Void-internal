@@ -22,4 +22,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Void-Internal
-          path: build/Release/void_internal.dll
+          path: |
+            build/Release/void_internal.dll
+            build/Release/void_injector.exe
