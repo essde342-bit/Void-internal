@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <cmath>
 #include <vector>
+#include "config.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -58,13 +59,7 @@ static bool coord_sane(float v) {
     return v == v && v > -1e5f && v < 1e5f;
 }
 
-struct Config {
-    bool box;
-    bool skeleton;
-    bool health;
-    bool name;
-    bool teamcheck;
-} g_cfg;
+Config g_cfg; // определение глобальной переменной
 
 static constexpr uint32_t rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | (uint32_t)a;
