@@ -23,26 +23,23 @@ namespace off {
     constexpr uintptr_t dwLocalPlayerPawn       = 0x2553D38;
     constexpr uintptr_t dwViewMatrix            = 0x2559640;
 
-    constexpr uintptr_t m_iHealth               = 0x34C;   // C_BaseEntity
-    constexpr uintptr_t m_lifeState             = 0x354;   // C_BaseEntity
-    constexpr uintptr_t m_pGameSceneNode        = 0x330;   // C_BaseEntity
-    constexpr uintptr_t m_iTeamNum              = 0x3E7;   // C_BaseEntity
+    constexpr uintptr_t m_iHealth               = 0x34C;
+    constexpr uintptr_t m_lifeState             = 0x354;
+    constexpr uintptr_t m_pGameSceneNode        = 0x330;
+    constexpr uintptr_t m_iTeamNum              = 0x3E7;
 
-    constexpr uintptr_t m_vecOrigin             = 0x80;    // CGameSceneNode
-    constexpr uintptr_t m_modelState            = 0x140;   // CSkeletonInstance
-    constexpr uintptr_t m_pBoneArray            = 0x80;    // CModelState
+    constexpr uintptr_t m_vecOrigin             = 0x80;
+    constexpr uintptr_t m_modelState            = 0x140;
+    constexpr uintptr_t m_pBoneArray            = 0x80;
 
-    constexpr uintptr_t m_hOriginalController   = 0x1560;  // C_CSPlayerPawnBase
-    constexpr uintptr_t m_hPawn                 = 0x6BC;   // CBasePlayerController
-    constexpr uintptr_t m_iszPlayerName         = 0x6FC;   // CBasePlayerController
+    constexpr uintptr_t m_hOriginalController   = 0x1560;
+    constexpr uintptr_t m_hPawn                 = 0x6BC;
+    constexpr uintptr_t m_iszPlayerName         = 0x6FC;
 
     constexpr uintptr_t ENTITY_IDENTITIES       = 0x10;
     constexpr int       MAX_ENTITIES            = 4096;
 }
 
-// ---------------------------------------------------------------------------
-// Math
-// ---------------------------------------------------------------------------
 struct Vec3 { float x, y, z; };
 struct Vec2 { float x, y; };
 struct ViewMatrix { float m[4][4]; };
@@ -61,9 +58,6 @@ static bool coord_sane(float v) {
     return v == v && v > -1e5f && v < 1e5f;
 }
 
-// ---------------------------------------------------------------------------
-// Config. Инициализируется РАНТАЙМОМ (manual map пропускает CRT init статиков)
-// ---------------------------------------------------------------------------
 struct Config {
     bool box;
     bool skeleton;
@@ -76,11 +70,15 @@ static constexpr uint32_t rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | (uint32_t)a;
 }
 
-void esp_render(float sw, float sh); // fwd
+void esp_render(float sw, float sh);
 
-// ---------------------------------------------------------------------------
-// Renderer: D3D11 immediate mode + GDI font atlas, batched
-// ---------------------------------------------------------------------------
+// Menu forward declarations
+namespace menu {
+    void install();
+    void toggle();
+    void render();
+}
+
 namespace gfx {
     struct Vertex { float x, y, z, w; float r, g, b, a; float u, v; };
     struct Batch  { bool textured; uint32_t start; uint32_t count; };
@@ -289,7 +287,7 @@ namespace gfx {
         fill(g_verts[s + 5], x0, y1, col, u0, v1);
     }
 
-    static void draw_line(float x0, float y0, float x1, float y1, uint32_t col) {
+    void draw_line(float x0, float y0, float x1, float y1, uint32_t col) {
         float dx = x1 - x0, dy = y1 - y0;
         float len = sqrtf(dx * dx + dy * dy);
         if (len < 0.0001f) return;
@@ -310,7 +308,7 @@ namespace gfx {
         draw_line(x, y + h, x, y, col);
     }
 
-    static void draw_rect_filled(float x, float y, float w, float h, uint32_t col) {
+    void draw_rect_filled(float x, float y, float w, float h, uint32_t col) {
         uint32_t s = reserve(false, 6);
         fill(g_verts[s + 0], x, y, col, 0, 0);
         fill(g_verts[s + 1], x + w, y, col, 0, 0);
@@ -329,7 +327,7 @@ namespace gfx {
         return w;
     }
 
-    static void draw_text(float x, float y, uint32_t col, bool centered, const char* fmt, ...) {
+    void draw_text(float x, float y, uint32_t col, bool centered, const char* fmt, ...) {
         char buf[512];
         va_list ap;
         va_start(ap, fmt);
@@ -408,9 +406,6 @@ namespace gfx {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Hook: vtable swap IDXGISwapChain::Present (slot 8). Без патчинга тела функции.
-// ---------------------------------------------------------------------------
 namespace hk {
     typedef HRESULT(__stdcall* PresentFn)(IDXGISwapChain*, UINT, UINT);
     static PresentFn o_present = nullptr;
@@ -421,10 +416,13 @@ namespace hk {
     static void remove();
 
     HRESULT __stdcall hooked_present(IDXGISwapChain* swap, UINT sync, UINT flags) {
-        gfx::init(swap); // один раз от реального swapchain игры, дальше no-op
+        gfx::init(swap);
         float sw = 0.f, sh = 0.f;
         gfx::begin_frame(swap, sw, sh);
-        if (sw > 0.f && sh > 0.f) esp_render(sw, sh);
+        if (sw > 0.f && sh > 0.f) {
+            esp_render(sw, sh);
+            menu::render();
+        }
         gfx::end_frame();
         return o_present(swap, sync, flags);
     }
@@ -470,9 +468,6 @@ namespace hk {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ESP: валидация перед КАЖДЫМ чтением, без SEH
-// ---------------------------------------------------------------------------
 static uintptr_t g_client = 0;
 
 static bool ptr_sane(uintptr_t p) {
@@ -490,7 +485,6 @@ static bool pawn_ok(uintptr_t p, uintptr_t local) {
     return ptr_sane(*(uintptr_t*)(p + off::m_pGameSceneNode));
 }
 
-// m_pInstance в CEntityIdentity ездил по билдам: кандидаты + валидация
 static uintptr_t resolve_instance(uintptr_t identity, uintptr_t local) {
     static const uintptr_t cands[3] = { 0x0, 0x70, 0x78 };
     for (int i = 0; i < 3; i++) {
@@ -520,7 +514,7 @@ static void draw_skeleton(uintptr_t pawn, const ViewMatrix& vm, float sw, float 
         {0, 5}, {5, 7}, {7, 8}, {8, 9}, {9, 10}, {7, 11}, {11, 12}, {12, 13},
         {5, 14}, {14, 15}, {15, 16}, {5, 17}, {17, 18}, {18, 19}
     };
-    const float* bones = (const float*)ba; // matrix3x4 = 12 float, translation = [3],[7],[11]
+    const float* bones = (const float*)ba;
     for (int i = 0; i < 14; i++) {
         int a = conn[i][0], b = conn[i][1];
         Vec3 pa = { bones[a * 12 + 3], bones[a * 12 + 7], bones[a * 12 + 11] };
@@ -543,7 +537,7 @@ void esp_render(float sw, float sh) {
     uintptr_t* ident = (uintptr_t*)(ent_sys + off::ENTITY_IDENTITIES);
 
     uint8_t local_team = *(uint8_t*)(local + off::m_iTeamNum);
-    if (local_team != 2 && local_team != 3) return; // не в матче
+    if (local_team != 2 && local_team != 3) return;
 
     int null_run = 0;
     for (int i = 0; i < off::MAX_ENTITIES; i++) {
@@ -618,18 +612,8 @@ void esp_render(float sw, float sh) {
             draw_skeleton(pawn, vm, sw, sh, rgba(255, 255, 255, 220));
         }
     }
-
-    gfx::draw_text(10.f, 10.f, rgba(180, 120, 255, 255), false,
-                   "VOID INTERNAL | F1 Box:%s F2 Skel:%s F3 HP:%s F4 Name:%s F5 Team:%s | END unload",
-                   g_cfg.box ? "on" : "off", g_cfg.skeleton ? "on" : "off",
-                   g_cfg.health ? "on" : "off", g_cfg.name ? "on" : "off",
-                   g_cfg.teamcheck ? "on" : "off");
 }
 
-// ---------------------------------------------------------------------------
-// Entry. Manual-map safe: ExitThread вместо FreeLibraryAndExitThread,
-// выгрузку памяти делает Xenos (Eject -> DLL_PROCESS_DETACH).
-// ---------------------------------------------------------------------------
 static DWORD WINAPI init_thread(LPVOID) {
     g_cfg.box = true;
     g_cfg.skeleton = true;
@@ -643,15 +627,12 @@ static DWORD WINAPI init_thread(LPVOID) {
     }
     Sleep(3000);
 
+    menu::install();
     hk::install();
 
     while (hk::g_hooked) {
         if (GetAsyncKeyState(VK_END) & 1) break;
-        if (GetAsyncKeyState(VK_F1) & 1) g_cfg.box = !g_cfg.box;
-        if (GetAsyncKeyState(VK_F2) & 1) g_cfg.skeleton = !g_cfg.skeleton;
-        if (GetAsyncKeyState(VK_F3) & 1) g_cfg.health = !g_cfg.health;
-        if (GetAsyncKeyState(VK_F4) & 1) g_cfg.name = !g_cfg.name;
-        if (GetAsyncKeyState(VK_F5) & 1) g_cfg.teamcheck = !g_cfg.teamcheck;
+        if (GetAsyncKeyState(VK_RSHIFT) & 1) menu::toggle();
         Sleep(10);
     }
 
@@ -665,7 +646,7 @@ BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         CreateThread(nullptr, 0, init_thread, nullptr, 0, nullptr);
     } else if (reason == DLL_PROCESS_DETACH) {
-        hk::remove(); // Xenos Eject: снимаем хук до размаппинга памяти
+        hk::remove();
     }
     return TRUE;
 }
