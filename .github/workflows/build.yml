@@ -17,6 +17,10 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Generate Windows app icon from the original logo
+        shell: pwsh
+        run: ./scripts/Generate-AppIcon.ps1
+
       - name: Configure native components
         run: cmake -B build -A x64
 
