@@ -8,13 +8,40 @@ public partial class App : Application
 
     public App()
     {
-        InitializeComponent();
-        RequestedTheme = ApplicationTheme.Dark;
+        StartupDiagnostics.Initialize();
+        StartupDiagnostics.Write("App constructor entered.");
+
+        try
+        {
+            InitializeComponent();
+            StartupDiagnostics.Write("Application XAML initialized.");
+            RequestedTheme = ApplicationTheme.Dark;
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Write("Application constructor failed.", ex);
+            throw;
+        }
+
+        UnhandledException += (_, e) =>
+            StartupDiagnostics.Write("Unhandled WinUI exception.", e.Exception);
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        CurrentWindow = new MainWindow();
-        CurrentWindow.Activate();
+        StartupDiagnostics.Write("OnLaunched entered.");
+
+        try
+        {
+            CurrentWindow = new MainWindow();
+            StartupDiagnostics.Write("MainWindow constructed.");
+            CurrentWindow.Activate();
+            StartupDiagnostics.Write("MainWindow activated.");
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Write("Window startup failed.", ex);
+            throw;
+        }
     }
 }
