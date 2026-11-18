@@ -9,3 +9,4 @@ add_library(void_internal SHARED src/dllmain.cpp src/menu.cpp)
 target_link_libraries(void_internal PRIVATE d3d11 dxgi d3dcompiler)
 
 add_executable(void_injector src/injector.cpp)
+target_link_libraries(void_injector PRIVATE advapi32)
