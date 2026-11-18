@@ -13,10 +13,10 @@
 
         <Grid x:Name="AppTitleBar" Grid.Row="0" Background="#090B11">
             <StackPanel Orientation="Horizontal" Spacing="11" VerticalAlignment="Center" Margin="22,0,0,0">
-                <Border Width="28" Height="28" CornerRadius="8" Background="#30264F"
+                <Border Width="30" Height="30" CornerRadius="7" Background="#11131C"
                         BorderBrush="#59458B" BorderThickness="1">
-                    <TextBlock Text="V" Foreground="#C2B2FF" FontSize="19" FontWeight="Bold"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Image Source="ms-appx:///Assets/logo.png"
+                           Width="28" Height="28" Stretch="Uniform" />
                 </Border>
                 <StackPanel Spacing="0" VerticalAlignment="Center">
                     <TextBlock Text="VOID" Foreground="#F4F2FF" FontSize="14"
