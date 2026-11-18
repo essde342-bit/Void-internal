@@ -37,7 +37,7 @@
             CompactPaneLength="68"
             SelectionChanged="OnNavigationSelectionChanged"
             Background="#0D1018"
-            PaneBackground="#0D1018">
+            >
 
             <NavigationView.PaneHeader>
                 <StackPanel Padding="22,18,12,18" Spacing="6">
