@@ -463,6 +463,8 @@ void paint(HDC dc) {
     // Main content header
     text(dc, 176, 25, 400, 24, L"VOID INJECTOR", g_font_title, TEXT);
     text(dc, 177, 50, 400, 18, L"COUNTER-STRIKE 2  /  X64", g_font_small, MUTED);
+    text(dc, 650, 22, 28, 28, L"—", g_font_body, MUTED, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    text(dc, 690, 22, 28, 28, L"×", g_font_body, MUTED, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     line(dc, 176, 82, 712, 82, BORDER);
 
     if (g_page == 1) {
