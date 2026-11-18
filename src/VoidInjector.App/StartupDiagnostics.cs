@@ -10,6 +10,8 @@ internal static class StartupDiagnostics
         "VOID Internal",
         "startup.log");
 
+    public static string LogFilePath => LogPath;
+
     public static void Initialize()
     {
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
