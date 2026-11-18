@@ -1,0 +1,79 @@
+<Page
+    x:Class="VoidInjector.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Padding="38,30,38,38" Spacing="22">
+            <StackPanel Spacing="7">
+                <TextBlock Text="PREFERENCES" Foreground="#9A83F7" FontSize="10"
+                           FontWeight="SemiBold" CharacterSpacing="190" />
+                <TextBlock Text="Settings" Foreground="#F2F3FA"
+                           FontSize="30" FontWeight="SemiBold" />
+                <TextBlock Text="Runtime and diagnostic information for this installation."
+                           Foreground="#929BB0" FontSize="13" />
+            </StackPanel>
+
+            <Border Background="#141927" BorderBrush="#293248" BorderThickness="1"
+                    CornerRadius="16" Padding="22">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="APPEARANCE" Foreground="#A7B0C3" FontSize="10"
+                               FontWeight="SemiBold" CharacterSpacing="145" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Fluent dark theme" Foreground="#F0F1F8"
+                                       FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock Text="Deep graphite surfaces with a violet accent."
+                                       Foreground="#8E98AD" FontSize="11" />
+                        </StackPanel>
+                        <Border Grid.Column="1" Background="#24203B" BorderBrush="#51427F"
+                                BorderThickness="1" CornerRadius="8" Padding="12,7"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="ACTIVE" Foreground="#C4B6FF" FontSize="9"
+                                       FontWeight="Bold" CharacterSpacing="100" />
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Background="#141927" BorderBrush="#293248" BorderThickness="1"
+                    CornerRadius="16" Padding="22">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="FILES &amp; DIAGNOSTICS" Foreground="#A7B0C3"
+                               FontSize="10" FontWeight="SemiBold" CharacterSpacing="145" />
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Diagnostic file" Foreground="#F0F1F8"
+                                   FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="last_run.txt" Foreground="#9A83F7" FontSize="12" />
+                    </StackPanel>
+                    <Border Height="1" Background="#293248" />
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Storage location" Foreground="#F0F1F8"
+                                   FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="The same folder as VoidInjector.exe"
+                                   Foreground="#8E98AD" FontSize="11" />
+                    </StackPanel>
+                    <Border Height="1" Background="#293248" />
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Log retention" Foreground="#F0F1F8"
+                                   FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="Only the latest run is kept. Starting a new run replaces the previous log."
+                                   Foreground="#8E98AD" FontSize="11" TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Background="#101723" BorderBrush="#26344A" BorderThickness="1"
+                    CornerRadius="16" Padding="22">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="COMPATIBILITY" Foreground="#A7B0C3" FontSize="10"
+                               FontWeight="SemiBold" CharacterSpacing="145" />
+                    <TextBlock Text="Windows 10 / 11  •  x64" Foreground="#E5E8F2"
+                               FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock Text="The WinUI application is published as a self-contained desktop build."
+                               Foreground="#8E98AD" FontSize="11" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

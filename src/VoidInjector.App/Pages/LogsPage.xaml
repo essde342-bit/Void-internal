@@ -1,0 +1,69 @@
+<Page
+    x:Class="VoidInjector.Pages.LogsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Padding="38,30,38,38" Spacing="22">
+            <StackPanel Spacing="7">
+                <TextBlock Text="DIAGNOSTICS" Foreground="#9A83F7" FontSize="10"
+                           FontWeight="SemiBold" CharacterSpacing="190" />
+                <TextBlock Text="Session logs" Foreground="#F2F3FA"
+                           FontSize="30" FontWeight="SemiBold" />
+                <TextBlock Text="Review the latest run or save its text report to your PC."
+                           Foreground="#929BB0" FontSize="13" />
+            </StackPanel>
+
+            <Border Background="#141927" BorderBrush="#293248" BorderThickness="1"
+                    CornerRadius="16" Padding="20">
+                <Grid ColumnSpacing="18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="52" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="48" Height="54" CornerRadius="10" Background="#24203B"
+                            BorderBrush="#4A3D75" BorderThickness="1">
+                        <TextBlock Text="TXT" Foreground="#C0B0FF" FontSize="11"
+                                   FontWeight="Bold" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                        <TextBlock Text="last_run.txt" Foreground="#F0F1F8"
+                                   FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock x:Name="FileStateText" Text="Checking log file..."
+                                   Foreground="#8E98AD" FontSize="11" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                VerticalAlignment="Center">
+                        <Button Content="REFRESH" Style="{StaticResource VoidSecondaryButtonStyle}"
+                                Click="OnRefreshClicked" />
+                        <Button Content="DOWNLOAD" Style="{StaticResource VoidAccentButtonStyle}"
+                                Click="OnDownloadClicked" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <StackPanel Spacing="10">
+                <Grid>
+                    <TextBlock Text="LATEST SESSION" Foreground="#A7B0C3" FontSize="10"
+                               FontWeight="SemiBold" CharacterSpacing="150" />
+                    <TextBlock Text="UTF-8  /  TXT" Foreground="#68738A" FontSize="9"
+                               HorizontalAlignment="Right" />
+                </Grid>
+                <Border Background="#0D111A" BorderBrush="#252D40" BorderThickness="1"
+                        CornerRadius="14" Padding="4">
+                    <TextBox x:Name="LogPreview" IsReadOnly="True" AcceptsReturn="True"
+                             TextWrapping="NoWrap" MinHeight="340"
+                             FontFamily="Consolas" FontSize="11"
+                             Foreground="#C6CBD8" Background="Transparent"
+                             BorderThickness="0" Padding="14"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto" />
+                </Border>
+                <TextBlock Text="Each new run replaces the previous last_run.txt file."
+                           Foreground="#727D94" FontSize="10" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

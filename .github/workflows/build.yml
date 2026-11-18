@@ -12,16 +12,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Configure native components
         run: cmake -B build -A x64
 
-      - name: Build
+      - name: Build native components
         run: cmake --build build --config Release
+
+      - name: Publish WinUI 3 application
+        run: dotnet publish src/VoidInjector.App/VoidInjector.App.csproj -c Release -r win-x64 --self-contained true -o publish/VoidInjector
+
+      - name: Bundle native module
+        shell: pwsh
+        run: Copy-Item build/Release/void_internal.dll publish/VoidInjector/void_internal.dll
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: Void-Internal
-          path: |
-            build/Release/void_internal.dll
-            build/Release/void_injector.exe
+          name: Void-Injector-WinUI
+          path: publish/VoidInjector/**
