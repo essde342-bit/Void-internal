@@ -116,8 +116,11 @@ namespace off {
 
     inline constexpr uintptr_t m_iszPlayerName       = 0x7F0;
 
-    inline constexpr uintptr_t ENTITY_IDENTITIES     = 0x10;
-    inline constexpr int       MAX_ENTITIES          = 512;
+    inline constexpr uintptr_t ENTITY_IDENTITIES       = 0x10;
+    inline constexpr uintptr_t ENTITY_IDENTITY_STRIDE = 0x78;
+    inline constexpr int       MAX_ENTITIES            = 512;   // entities per chunk
+    inline constexpr int       MAX_ENTITY_INDEX        = 32768; // 64 chunks * 512
+    inline constexpr int       MAX_CLIENTS             = 64;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,17 +204,60 @@ static uintptr_t resolve_instance(uintptr_t identity, uintptr_t local) {
     return 0;
 }
 
-static bool controller_ok(uintptr_t c) {
+// Source 2 EntityList is a table of chunk pointers. Each chunk contains
+// 512 CEntityIdentity records, each 0x78 bytes in CS2.
+static bool entity_identity_at(uintptr_t entity_system, uint32_t index, uintptr_t& out_identity) {
+    out_identity = 0;
+    if (!ptr_sane(entity_system) || index >= (uint32_t)off::MAX_ENTITY_INDEX)
+        return false;
+
+    const uintptr_t chunk_ptr_addr =
+        entity_system + off::ENTITY_IDENTITIES +
+        (uintptr_t)(index / off::MAX_ENTITIES) * sizeof(uintptr_t);
+
+    uintptr_t chunk = 0;
+    if (!read_val(chunk_ptr_addr, chunk) || !ptr_sane(chunk))
+        return false;
+
+    const uintptr_t slot =
+        chunk + (uintptr_t)(index % off::MAX_ENTITIES) * off::ENTITY_IDENTITY_STRIDE;
+
+    if (!is_readable(reinterpret_cast<const void*>(slot), sizeof(uintptr_t)))
+        return false;
+
+    out_identity = slot;
+    return true;
+}
+
+static uintptr_t entity_instance_at(uintptr_t entity_system, uint32_t index) {
+    uintptr_t identity = 0;
+    if (!entity_identity_at(entity_system, index, identity))
+        return 0;
+
+    uintptr_t instance = 0;
+    if (!read_val(identity, instance) || !ptr_sane(instance))
+        return 0;
+
+    return instance;
+}
+
+static uintptr_t resolve_pawn_at(uintptr_t entity_system, uint32_t index, uintptr_t local) {
+    const uintptr_t pawn = entity_instance_at(entity_system, index);
+    return pawn_ok(pawn, local) ? pawn : 0;
+}
+
+static bool controller_ok(uintptr_t c, uint32_t& pawn_handle) {
+    pawn_handle = 0xFFFFFFFFu;
     if (!ptr_sane(c)) return false;
 
-    uint8_t  team  = 0;
-    uint32_t hpawn = 0;
+    uint8_t team = 0;
+    if (!read_val(c + off::m_iTeamNum, team) || (team != 2 && team != 3))
+        return false;
 
-    if (!read_val(c + off::m_iTeamNum, team)) return false;
-    if (team != 2 && team != 3) return false;
+    if (!read_val(c + off::m_hPawn, pawn_handle) || pawn_handle == 0xFFFFFFFFu)
+        return false;
 
-    if (!read_val(c + off::m_hPawn, hpawn)) return false;
-    return (hpawn & 0x7FFF) < (uint32_t)off::MAX_ENTITIES;
+    return (pawn_handle & 0x7FFFu) < (uint32_t)off::MAX_ENTITY_INDEX;
 }
 
 static bool read_origin(uintptr_t node, Vec3& out) {
@@ -1387,10 +1433,10 @@ static void draw_skeleton(uintptr_t pawn, const ViewMatrix& vm, float sw, float 
 }
 
 static void esp_render(float sw, float sh) {
-    if (!g_client) return;
+    if (!g_client || sw <= 0.f || sh <= 0.f) return;
 
-    uintptr_t ent_sys = 0, local = 0;
-    if (!read_val(g_client + off::dwEntityList, ent_sys) || !ptr_sane(ent_sys)) return;
+    uintptr_t entity_system = 0, local = 0;
+    if (!read_val(g_client + off::dwEntityList, entity_system) || !ptr_sane(entity_system)) return;
     if (!read_val(g_client + off::dwLocalPlayerPawn, local) || !ptr_sane(local)) return;
 
     ViewMatrix vm;
@@ -1400,15 +1446,19 @@ static void esp_render(float sw, float sh) {
     if (!read_val(local + off::m_iTeamNum, local_team)) return;
     if (local_team != 2 && local_team != 3) return;
 
-    uintptr_t ident_base = ent_sys + off::ENTITY_IDENTITIES;
+    // Player controllers normally occupy the first entity chunk.
+    // Resolve each controller's pawn through its handle, which may point
+    // into a later chunk.
+    for (uint32_t i = 1; i <= (uint32_t)off::MAX_CLIENTS; ++i) {
+        const uintptr_t controller = entity_instance_at(entity_system, i);
+        if (!ptr_sane(controller)) continue;
 
-    for (int i = 0; i < off::MAX_ENTITIES; i++) {
-        uintptr_t identity = 0;
-        if (!read_val(ident_base + i * sizeof(uintptr_t), identity) || !ptr_sane(identity))
-            continue;
+        uint32_t pawn_handle = 0xFFFFFFFFu;
+        if (!controller_ok(controller, pawn_handle)) continue;
 
-        uintptr_t pawn = resolve_instance(identity, local);
-        if (!pawn) continue;
+        const uint32_t pawn_index = pawn_handle & 0x7FFFu;
+        const uintptr_t pawn = resolve_pawn_at(entity_system, pawn_index, local);
+        if (!pawn || pawn == local) continue;
 
         int hp = 0;
         uint8_t team = 0;
@@ -1427,7 +1477,7 @@ static void esp_render(float sw, float sh) {
         if (!world_to_screen(head_w, head_s, vm, sw, sh)) continue;
         if (!world_to_screen(origin, feet_s, vm, sw, sh)) continue;
 
-        float h = feet_s.y - head_s.y;
+        const float h = feet_s.y - head_s.y;
         if (!std::isfinite(h) || h < 4.f || h > sh * 2.f) continue;
 
         const float w = h * 0.4f;
@@ -1435,56 +1485,36 @@ static void esp_render(float sw, float sh) {
             feet_s.y < 0.f || head_s.y > sh)
             continue;
 
-        float bx = head_s.x - w * 0.5f;
-
-        uint32_t col = (team == local_team)
+        const float bx = head_s.x - w * 0.5f;
+        const uint32_t col = (team == local_team)
             ? gfx::rgba(60, 200, 60, 255)
             : gfx::rgba(255, 60, 60, 255);
 
         if (g_cfg.box) {
-            gfx::draw_rect(bx - 1, head_s.y - 1, w + 2, h + 2, gfx::rgba(0, 0, 0, 200));
+            gfx::draw_rect(bx - 1.f, head_s.y - 1.f, w + 2.f, h + 2.f, gfx::rgba(0, 0, 0, 200));
             gfx::draw_rect(bx, head_s.y, w, h, col);
         }
 
         if (g_cfg.health) {
-            float pct = (hp > 100) ? 1.f : hp / 100.f;
+            const float pct = (float)hp / 100.f;
             gfx::draw_rect_filled(bx - 6.f, head_s.y, 4.f, h, gfx::rgba(0, 0, 0, 180));
             gfx::draw_rect_filled(
                 bx - 6.f, head_s.y + h - h * pct, 4.f, h * pct,
-                gfx::rgba((uint8_t)(255 - 255 * pct), (uint8_t)(255 * pct), 0, 255)
+                gfx::rgba((uint8_t)(255.f - 255.f * pct), (uint8_t)(255.f * pct), 0, 255)
             );
         }
 
         if (g_cfg.name) {
             char name[32] = {};
-
-            uint32_t hctl = 0;
-            if (read_val(pawn + off::m_hOriginalController, hctl)) {
-                uint32_t cidx = hctl & 0x7FFF;
-                if (cidx < (uint32_t)off::MAX_ENTITIES) {
-                    uintptr_t cident = 0;
-                    if (read_val(ident_base + cidx * sizeof(uintptr_t), cident) && ptr_sane(cident)) {
-                        static const uintptr_t cc[4] = { 0x0, 0x70, 0x78, 0x80 };
-
-                        for (int k = 0; k < 4 && name[0] == 0; k++) {
-                            uintptr_t ctl = 0;
-                            if (!read_val(cident + cc[k], ctl)) continue;
-                            if (!controller_ok(ctl)) continue;
-
-                            // FIX: один check на 32 байта вместо 31 VirtualQuery
-                            uintptr_t na = ctl + off::m_iszPlayerName;
-                            if (!is_readable(reinterpret_cast<const void*>(na), 32)) continue;
-
-                            const char* nm = reinterpret_cast<const char*>(na);
-                            int n = 0;
-                            while (n < 31 && nm[n] >= 0x20 && nm[n] <= 0x7E) {
-                                name[n] = nm[n];
-                                n++;
-                            }
-                            name[n] = 0;
-                        }
-                    }
+            const uintptr_t name_addr = controller + off::m_iszPlayerName;
+            if (is_readable(reinterpret_cast<const void*>(name_addr), sizeof(name))) {
+                const char* src = reinterpret_cast<const char*>(name_addr);
+                int n = 0;
+                while (n < (int)sizeof(name) - 1 && src[n] >= 0x20 && src[n] <= 0x7E) {
+                    name[n] = src[n];
+                    ++n;
                 }
+                name[n] = 0;
             }
 
             if (name[0])
