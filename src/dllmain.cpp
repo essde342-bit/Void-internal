@@ -1,5 +1,4 @@
-// Void Internal — CS2 internal ESP. Single TU, Xenos/manual-map compatible.
-// No SEH, no FreeLibrary, no CRT static-init reliance.
+// Void Internal — CS2 internal ESP. Stable core. LoadLibrary + manual-map safe.
 #include <Windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -11,10 +10,32 @@
 #include <cmath>
 #include <vector>
 #include "config.h"
+#include "gfx.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
+
+// ---------------------------------------------------------------------------
+// Log
+// ---------------------------------------------------------------------------
+static void vlog(const char* fmt, ...) {
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    OutputDebugStringA(buf);
+    OutputDebugStringA("\n");
+    char path[MAX_PATH];
+    GetTempPathA(MAX_PATH, path);
+    strcat_s(path, "void_internal.log");
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "a") == 0 && f) {
+        fprintf(f, "%s\n", buf);
+        fclose(f);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Offsets. Дамп 12.11.2026 (a2x/cs2-dumper, cs2-sdk.com).
@@ -59,21 +80,23 @@ static bool coord_sane(float v) {
     return v == v && v > -1e5f && v < 1e5f;
 }
 
-Config g_cfg; // определение глобальной переменной
+Config g_cfg = { true, true, true, true, true };
+static bool g_unloading = false;
 
-static constexpr uint32_t rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | (uint32_t)a;
-}
+using gfx::rgba;
 
 void esp_render(float sw, float sh);
 
-// Menu forward declarations
 namespace menu {
     void install();
-    void toggle();
+    void poll(float sw, float sh);
     void render();
+    void toggle();
 }
 
+// ---------------------------------------------------------------------------
+// Renderer
+// ---------------------------------------------------------------------------
 namespace gfx {
     struct Vertex { float x, y, z, w; float r, g, b, a; float u, v; };
     struct Batch  { bool textured; uint32_t start; uint32_t count; };
@@ -113,13 +136,15 @@ namespace gfx {
         "SamplerState samp : register(s0);\n"
         "float4 main(PI i) : SV_Target { float4 t = tex.Sample(samp, i.t); return float4(i.c.rgb, i.c.a * t.a); }\n";
 
-    static void build_font() {
+    // FIX: restore old bitmap before DeleteObject (GDI leak)
+    static bool build_font(ID3D11Device* dev, ID3D11ShaderResourceView** out_srv, ID3D11SamplerState** out_samp) {
         const int TW = 512, TH = 512;
         HDC hdc = CreateCompatibleDC(nullptr);
+        if (!hdc) return false;
         HFONT hf = CreateFontA(16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
                                DEFAULT_PITCH | FF_DONTCARE, "Arial");
-        HFONT old = (HFONT)SelectObject(hdc, hf);
+        HFONT oldf = (HFONT)SelectObject(hdc, hf);
 
         BITMAPINFO bmi = {};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -130,7 +155,8 @@ namespace gfx {
         bmi.bmiHeader.biCompression = BI_RGB;
         void* bits = nullptr;
         HBITMAP hb = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
-        SelectObject(hdc, hb);
+        if (!hb || !bits) { SelectObject(hdc, oldf); DeleteObject(hf); DeleteDC(hdc); return false; }
+        HBITMAP oldb = (HBITMAP)SelectObject(hdc, hb);
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, RGB(255, 255, 255));
         memset(bits, 0, (size_t)TW * TH * 4);
@@ -150,7 +176,6 @@ namespace gfx {
             if (sz.cy > rowh) rowh = sz.cy;
             px += sz.cx + 2;
         }
-        SelectObject(hdc, old);
 
         uint32_t* pix = (uint32_t*)bits;
         for (int i = 0; i < TW * TH; i++) {
@@ -168,70 +193,124 @@ namespace gfx {
         D3D11_SUBRESOURCE_DATA sd = {};
         sd.pSysMem = bits; sd.SysMemPitch = TW * 4;
         ID3D11Texture2D* tex = nullptr;
-        g_dev->CreateTexture2D(&td, &sd, &tex);
-        g_dev->CreateShaderResourceView(tex, nullptr, &g_font_srv);
-        if (tex) tex->Release();
-
+        HRESULT hr = dev->CreateTexture2D(&td, &sd, &tex);
+        if (SUCCEEDED(hr) && tex) {
+            hr = dev->CreateShaderResourceView(tex, nullptr, out_srv);
+            tex->Release();
+        }
         D3D11_SAMPLER_DESC sm = {};
         sm.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         sm.AddressU = sm.AddressV = sm.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-        g_dev->CreateSamplerState(&sm, &g_samp);
+        if (SUCCEEDED(hr)) hr = dev->CreateSamplerState(&sm, out_samp);
 
+        SelectObject(hdc, oldb);
         DeleteObject(hb);
+        SelectObject(hdc, oldf);
         DeleteObject(hf);
         DeleteDC(hdc);
+        return SUCCEEDED(hr) && *out_srv && *out_samp;
     }
 
+    // FIX: collect into locals, commit only on full success (no AddRef leak on retry)
     static bool init(IDXGISwapChain* swap) {
         if (g_ready) return true;
         if (!swap) return false;
-        if (FAILED(swap->GetDevice(__uuidof(ID3D11Device), (void**)&g_dev))) return false;
-        g_dev->GetImmediateContext(&g_ctx);
 
+        ID3D11Device* dev = nullptr; ID3D11DeviceContext* ctx = nullptr;
         ID3DBlob *vsb = nullptr, *ps1 = nullptr, *ps2 = nullptr;
-        if (FAILED(D3DCompile(VS_SRC, strlen(VS_SRC), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsb, nullptr))) return false;
-        if (FAILED(D3DCompile(PS_SOLID_SRC, strlen(PS_SOLID_SRC), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &ps1, nullptr))) return false;
-        if (FAILED(D3DCompile(PS_TEX_SRC, strlen(PS_TEX_SRC), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &ps2, nullptr))) return false;
+        ID3D11VertexShader* vs = nullptr; ID3D11PixelShader *pss = nullptr, *pst = nullptr;
+        ID3D11InputLayout* il = nullptr; ID3D11Buffer* vb = nullptr;
+        ID3D11BlendState* bl = nullptr; ID3D11RasterizerState* rs = nullptr;
+        ID3D11ShaderResourceView* srv = nullptr; ID3D11SamplerState* samp = nullptr;
+        bool ok = false;
 
-        g_dev->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(), nullptr, &g_vs);
-        g_dev->CreatePixelShader(ps1->GetBufferPointer(), ps1->GetBufferSize(), nullptr, &g_ps_solid);
-        g_dev->CreatePixelShader(ps2->GetBufferPointer(), ps2->GetBufferSize(), nullptr, &g_ps_tex);
+        do {
+            if (FAILED(swap->GetDevice(__uuidof(ID3D11Device), (void**)&dev)) || !dev) break;
+            dev->GetImmediateContext(&ctx); if (!ctx) break;
+            if (FAILED(D3DCompile(VS_SRC, strlen(VS_SRC), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsb, nullptr)) || !vsb) break;
+            if (FAILED(D3DCompile(PS_SOLID_SRC, strlen(PS_SOLID_SRC), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &ps1, nullptr)) || !ps1) break;
+            if (FAILED(D3DCompile(PS_TEX_SRC, strlen(PS_TEX_SRC), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &ps2, nullptr)) || !ps2) break;
+            if (FAILED(dev->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(), nullptr, &vs)) || !vs) break;
+            if (FAILED(dev->CreatePixelShader(ps1->GetBufferPointer(), ps1->GetBufferSize(), nullptr, &pss)) || !pss) break;
+            if (FAILED(dev->CreatePixelShader(ps2->GetBufferPointer(), ps2->GetBufferSize(), nullptr, &pst)) || !pst) break;
 
-        D3D11_INPUT_ELEMENT_DESC il[] = {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-        };
-        g_dev->CreateInputLayout(il, 3, vsb->GetBufferPointer(), vsb->GetBufferSize(), &g_il);
-        vsb->Release(); ps1->Release(); ps2->Release();
+            D3D11_INPUT_ELEMENT_DESC il_desc[] = {
+                { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+                { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+                { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            };
+            if (FAILED(dev->CreateInputLayout(il_desc, 3, vsb->GetBufferPointer(), vsb->GetBufferSize(), &il)) || !il) break;
 
-        g_vb_cap = 20000;
-        D3D11_BUFFER_DESC bd = {};
-        bd.Usage = D3D11_USAGE_DYNAMIC;
-        bd.ByteWidth = sizeof(Vertex) * g_vb_cap;
-        bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        g_dev->CreateBuffer(&bd, nullptr, &g_vb);
+            D3D11_BUFFER_DESC bd = {};
+            bd.Usage = D3D11_USAGE_DYNAMIC; bd.ByteWidth = sizeof(Vertex) * 20000;
+            bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            if (FAILED(dev->CreateBuffer(&bd, nullptr, &vb)) || !vb) break;
 
-        D3D11_BLEND_DESC bl = {};
-        bl.RenderTarget[0].BlendEnable = TRUE;
-        bl.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-        bl.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-        bl.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-        bl.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-        bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
-        bl.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-        bl.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        g_dev->CreateBlendState(&bl, &g_blend);
+            D3D11_BLEND_DESC bld = {};
+            bld.RenderTarget[0].BlendEnable = TRUE;
+            bld.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+            bld.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+            bld.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+            bld.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+            bld.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+            bld.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            bld.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            if (FAILED(dev->CreateBlendState(&bld, &bl)) || !bl) break;
 
-        D3D11_RASTERIZER_DESC rd = {};
-        rd.FillMode = D3D11_FILL_SOLID;
-        rd.CullMode = D3D11_CULL_NONE;
-        g_dev->CreateRasterizerState(&rd, &g_rs);
+            D3D11_RASTERIZER_DESC rd = {};
+            rd.FillMode = D3D11_FILL_SOLID; rd.CullMode = D3D11_CULL_NONE;
+            if (FAILED(dev->CreateRasterizerState(&rd, &rs)) || !rs) break;
 
-        build_font();
+            if (!build_font(dev, &srv, &samp)) break;
+            ok = true;
+        } while (false);
+
+        if (vsb) vsb->Release();
+        if (ps1) ps1->Release();
+        if (ps2) ps2->Release();
+
+        if (!ok) {
+            if (srv) srv->Release();
+            if (samp) samp->Release();
+            if (rs) rs->Release();
+            if (bl) bl->Release();
+            if (vb) vb->Release();
+            if (il) il->Release();
+            if (pst) pst->Release();
+            if (pss) pss->Release();
+            if (vs) vs->Release();
+            if (ctx) ctx->Release();
+            if (dev) dev->Release();
+            vlog("gfx: init fail");
+            return false;
+        }
+
+        g_dev = dev; g_ctx = ctx; g_vs = vs; g_ps_solid = pss; g_ps_tex = pst;
+        g_il = il; g_vb = vb; g_vb_cap = 20000; g_blend = bl; g_rs = rs;
+        g_font_srv = srv; g_samp = samp;
         g_ready = true;
+        vlog("gfx: init ok");
         return true;
+    }
+
+    bool ready() { return g_ready; }
+
+    void shutdown() {
+        if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
+        if (g_vb) { g_vb->Release(); g_vb = nullptr; }
+        if (g_blend) { g_blend->Release(); g_blend = nullptr; }
+        if (g_rs) { g_rs->Release(); g_rs = nullptr; }
+        if (g_font_srv) { g_font_srv->Release(); g_font_srv = nullptr; }
+        if (g_samp) { g_samp->Release(); g_samp = nullptr; }
+        if (g_il) { g_il->Release(); g_il = nullptr; }
+        if (g_vs) { g_vs->Release(); g_vs = nullptr; }
+        if (g_ps_solid) { g_ps_solid->Release(); g_ps_solid = nullptr; }
+        if (g_ps_tex) { g_ps_tex->Release(); g_ps_tex = nullptr; }
+        if (g_ctx) { g_ctx->Release(); g_ctx = nullptr; }
+        if (g_dev) { g_dev->Release(); g_dev = nullptr; }
+        g_verts.clear(); g_batches.clear();
+        g_ready = false;
+        vlog("gfx: shutdown");
     }
 
     static void begin_frame(IDXGISwapChain* swap, float& sw, float& sh) {
@@ -296,7 +375,7 @@ namespace gfx {
         fill(g_verts[s + 5], x0 - nx, y0 - ny, col, 0, 0);
     }
 
-    static void draw_rect(float x, float y, float w, float h, uint32_t col) {
+    void draw_rect(float x, float y, float w, float h, uint32_t col) {
         draw_line(x, y, x + w, y, col);
         draw_line(x + w, y, x + w, y + h, col);
         draw_line(x + w, y + h, x, y + h, col);
@@ -313,7 +392,7 @@ namespace gfx {
         fill(g_verts[s + 5], x, y + h, col, 0, 0);
     }
 
-    static float text_width(const char* s) {
+    float text_width(const char* s) {
         float w = 0.f;
         for (; *s; s++) {
             unsigned char c = (unsigned char)*s;
@@ -338,6 +417,7 @@ namespace gfx {
         }
     }
 
+    // FIX: skip draw if Map fails (no stale-buffer draw)
     static void end_frame() {
         if (!g_ready || !g_rtv || g_verts.empty()) {
             if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
@@ -354,10 +434,12 @@ namespace gfx {
             g_dev->CreateBuffer(&bd, nullptr, &g_vb);
         }
         D3D11_MAPPED_SUBRESOURCE mp;
-        if (SUCCEEDED(g_ctx->Map(g_vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mp))) {
-            memcpy(mp.pData, g_verts.data(), g_verts.size() * sizeof(Vertex));
-            g_ctx->Unmap(g_vb, 0);
+        if (FAILED(g_ctx->Map(g_vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mp))) {
+            g_rtv->Release(); g_rtv = nullptr;
+            return;
         }
+        memcpy(mp.pData, g_verts.data(), g_verts.size() * sizeof(Vertex));
+        g_ctx->Unmap(g_vb, 0);
 
         D3D11_VIEWPORT vp = {};
         vp.MinDepth = 0.f; vp.MaxDepth = 1.f;
@@ -401,20 +483,22 @@ namespace gfx {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
 namespace hk {
     typedef HRESULT(__stdcall* PresentFn)(IDXGISwapChain*, UINT, UINT);
     static PresentFn o_present = nullptr;
     static void** g_vtable = nullptr;
     static bool g_hooked = false;
 
-    static bool install();
-    static void remove();
-
     HRESULT __stdcall hooked_present(IDXGISwapChain* swap, UINT sync, UINT flags) {
-        gfx::init(swap);
+        if (g_unloading) return o_present(swap, sync, flags);
+        if (!gfx::init(swap)) return o_present(swap, sync, flags);
         float sw = 0.f, sh = 0.f;
         gfx::begin_frame(swap, sw, sh);
         if (sw > 0.f && sh > 0.f) {
+            menu::poll(sw, sh);
             esp_render(sw, sh);
             menu::render();
         }
@@ -428,7 +512,7 @@ namespace hk {
         sd.BufferCount = 1;
         sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        sd.OutputWindow = GetForegroundWindow();
+        sd.OutputWindow = GetDesktopWindow();
         sd.SampleDesc.Count = 1;
         sd.Windowed = TRUE;
         sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
@@ -437,8 +521,10 @@ namespace hk {
         ID3D11Device* dev = nullptr;
         ID3D11DeviceContext* ctx = nullptr;
         if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-                nullptr, 0, D3D11_SDK_VERSION, &sd, &sc, &dev, nullptr, &ctx)))
+                nullptr, 0, D3D11_SDK_VERSION, &sd, &sc, &dev, nullptr, &ctx))) {
+            vlog("hk: dummy swapchain fail");
             return false;
+        }
 
         g_vtable = *(void***)sc;
         o_present = (PresentFn)g_vtable[8];
@@ -450,6 +536,7 @@ namespace hk {
 
         sc->Release(); dev->Release(); ctx->Release();
         g_hooked = true;
+        vlog("hk: present hooked");
         return true;
     }
 
@@ -460,9 +547,13 @@ namespace hk {
         g_vtable[8] = (void*)o_present;
         VirtualProtect(&g_vtable[8], sizeof(void*), old, &old);
         g_hooked = false;
+        vlog("hk: present restored");
     }
 }
 
+// ---------------------------------------------------------------------------
+// ESP
+// ---------------------------------------------------------------------------
 static uintptr_t g_client = 0;
 
 static bool ptr_sane(uintptr_t p) {
@@ -512,6 +603,7 @@ static void draw_skeleton(uintptr_t pawn, const ViewMatrix& vm, float sw, float 
     const float* bones = (const float*)ba;
     for (int i = 0; i < 14; i++) {
         int a = conn[i][0], b = conn[i][1];
+        if (a >= 64 || b >= 64) continue;
         Vec3 pa = { bones[a * 12 + 3], bones[a * 12 + 7], bones[a * 12 + 11] };
         Vec3 pb = { bones[b * 12 + 3], bones[b * 12 + 7], bones[b * 12 + 11] };
         if (!coord_sane(pa.x) || !coord_sane(pa.y) || !coord_sane(pa.z)) continue;
@@ -609,30 +701,36 @@ void esp_render(float sw, float sh) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Entry. FIX: loop lives until END; hook retries if install failed.
+// ---------------------------------------------------------------------------
 static DWORD WINAPI init_thread(LPVOID) {
-    g_cfg.box = true;
-    g_cfg.skeleton = true;
-    g_cfg.health = true;
-    g_cfg.name = true;
-    g_cfg.teamcheck = true;
-
+    vlog("void: thread start");
     while (!g_client) {
         g_client = (uintptr_t)GetModuleHandleA("client.dll");
         if (!g_client) Sleep(200);
     }
+    vlog("void: client.dll = %p", (void*)g_client);
     Sleep(3000);
 
     menu::install();
     hk::install();
 
-    while (hk::g_hooked) {
+    for (;;) {
         if (GetAsyncKeyState(VK_END) & 1) break;
-        if (GetAsyncKeyState(VK_RSHIFT) & 1) menu::toggle();
-        Sleep(10);
+        if (!hk::g_hooked) {
+            hk::install();
+            Sleep(1000);
+        } else {
+            Sleep(10);
+        }
     }
 
+    g_unloading = true;
     hk::remove();
+    gfx::shutdown();
     Sleep(300);
+    vlog("void: thread exit");
     ExitThread(0);
     return 0;
 }
@@ -641,7 +739,9 @@ BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         CreateThread(nullptr, 0, init_thread, nullptr, 0, nullptr);
     } else if (reason == DLL_PROCESS_DETACH) {
+        g_unloading = true;
         hk::remove();
+        gfx::shutdown();
     }
     return TRUE;
 }
