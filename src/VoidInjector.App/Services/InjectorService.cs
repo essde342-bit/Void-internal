@@ -306,38 +306,38 @@ public sealed class InjectorService
         }
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "OpenProcess", ExactSpelling = true, SetLastError = true)]
     private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, uint processId);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "VirtualAllocEx", ExactSpelling = true, SetLastError = true)]
     private static extern IntPtr VirtualAllocEx(IntPtr process, IntPtr address,
         UIntPtr size, uint allocationType, uint protect);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "WriteProcessMemory", ExactSpelling = true, SetLastError = true)]
     private static extern bool WriteProcessMemory(IntPtr process, IntPtr address,
         byte[] buffer, UIntPtr size, out UIntPtr written);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "GetModuleHandleW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr GetModuleHandleW(string moduleName);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "GetProcAddress", ExactSpelling = true, SetLastError = true)]
     private static extern IntPtr GetProcAddress(IntPtr module, string procedureName);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "CreateRemoteThread", ExactSpelling = true, SetLastError = true)]
     private static extern IntPtr CreateRemoteThread(IntPtr process, IntPtr threadAttributes,
         UIntPtr stackSize, IntPtr startAddress, IntPtr parameter, uint creationFlags,
         out uint threadId);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "WaitForSingleObject", ExactSpelling = true, SetLastError = true)]
     private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "GetExitCodeThread", ExactSpelling = true, SetLastError = true)]
     private static extern bool GetExitCodeThread(IntPtr thread, out uint exitCode);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "VirtualFreeEx", ExactSpelling = true, SetLastError = true)]
     private static extern bool VirtualFreeEx(IntPtr process, IntPtr address,
         UIntPtr size, uint freeType);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "CloseHandle", ExactSpelling = true, SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 }
