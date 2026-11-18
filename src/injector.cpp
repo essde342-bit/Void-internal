@@ -43,6 +43,7 @@ int g_progress = 0;
 
 int g_state = 0; // 0 neutral, 1 success, 2 error
 
+std::wstring exe_dir(); // used by the log path helper below
 std::mutex g_log_mutex;
 std::wstring log_path() { return exe_dir() + L"last_run.txt"; }
 
