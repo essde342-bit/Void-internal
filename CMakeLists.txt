@@ -25,5 +25,5 @@ target_link_libraries(void_internal PRIVATE
     gdi32
 )
 
-add_executable(void_injector src/injector.cpp)
-target_link_libraries(void_injector PRIVATE advapi32)
+add_executable(void_injector WIN32 src/injector.cpp)
+target_link_libraries(void_injector PRIVATE advapi32 user32 gdi32)
