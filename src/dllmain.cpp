@@ -312,6 +312,8 @@ static bool                      g_ready    = false;
 
 static std::vector<Vertex> g_verts;
 static std::vector<Batch>  g_batches;
+static float g_screen_w = 1920.f;
+static float g_screen_h = 1080.f;
 
 static float g_cw[256];
 static float g_ch;
@@ -601,6 +603,8 @@ static void begin_frame(IDXGISwapChain* swap, float& sw, float& sh) {
 
         sw = (float)dd.Width;
         sh = (float)dd.Height;
+        g_screen_w = sw;
+        g_screen_h = sh;
 
         if (FAILED(g_dev->CreateRenderTargetView(bb, nullptr, &g_rtv)))
             g_rtv = nullptr;
@@ -625,7 +629,12 @@ static uint32_t reserve(bool textured, uint32_t n) {
 }
 
 static void fill(Vertex& v, float x, float y, uint32_t col, float u, float vv) {
-    v.x = x; v.y = y; v.z = 0.f; v.w = 1.f;
+    // UI primitives are authored in pixels; D3D clip-space is [-1, +1].
+    const float sw = (g_screen_w > 1.f) ? g_screen_w : 1920.f;
+    const float sh = (g_screen_h > 1.f) ? g_screen_h : 1080.f;
+    v.x = (x / sw) * 2.f - 1.f;
+    v.y = 1.f - (y / sh) * 2.f;
+    v.z = 0.f; v.w = 1.f;
     v.r = ((col >> 24) & 0xFF) / 255.f;
     v.g = ((col >> 16) & 0xFF) / 255.f;
     v.b = ((col >> 8)  & 0xFF) / 255.f;
