@@ -138,19 +138,32 @@ static bool world_pos_plausible(const Vec3& v) {
 }
 
 static bool world_to_screen(const Vec3& w, Vec2& s, const ViewMatrix& vm, float sw, float sh) {
-    float d = vm.m[3][0] * w.x + vm.m[3][1] * w.y + vm.m[3][2] * w.z + vm.m[3][3];
-    if (d < 0.001f) return false;
+    if (!std::isfinite(sw) || !std::isfinite(sh) || sw <= 0.f || sh <= 0.f)
+        return false;
 
-    float x = vm.m[0][0] * w.x + vm.m[0][1] * w.y + vm.m[0][2] * w.z + vm.m[0][3];
-    float y = vm.m[1][0] * w.x + vm.m[1][1] * w.y + vm.m[1][2] * w.z + vm.m[1][3];
+    const float d = vm.m[3][0] * w.x + vm.m[3][1] * w.y +
+                    vm.m[3][2] * w.z + vm.m[3][3];
+    if (!std::isfinite(d) || d <= 0.001f)
+        return false;
 
-    float inv = 1.f / d;
+    float x = vm.m[0][0] * w.x + vm.m[0][1] * w.y +
+              vm.m[0][2] * w.z + vm.m[0][3];
+    float y = vm.m[1][0] * w.x + vm.m[1][1] * w.y +
+              vm.m[1][2] * w.z + vm.m[1][3];
+
+    const float inv = 1.f / d;
     x *= inv;
     y *= inv;
+    if (!std::isfinite(x) || !std::isfinite(y))
+        return false;
 
     s.x = (sw * 0.5f) + (x * sw * 0.5f);
     s.y = (sh * 0.5f) - (y * sh * 0.5f);
-    return true;
+
+    // Reject wildly invalid coordinates; they can create oversized primitives.
+    return std::isfinite(s.x) && std::isfinite(s.y) &&
+           s.x >= -sw && s.x <= sw * 2.f &&
+           s.y >= -sh && s.y <= sh * 2.f;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,24 +215,9 @@ static bool controller_ok(uintptr_t c) {
 }
 
 static bool read_origin(uintptr_t node, Vec3& out) {
-    static int origin_off = -1;
-    static const uintptr_t cands[4] = { 0xC8, 0xD0, 0xC0, 0x80 };
-
-    if (origin_off >= 0) {
-        if (!read_val(node + (uintptr_t)origin_off, out)) return false;
-        return world_pos_plausible(out);
-    }
-
-    for (int i = 0; i < 4; i++) {
-        Vec3 v;
-        if (!read_val(node + cands[i], v)) continue;
-        if (world_pos_plausible(v)) {
-            origin_off = (int)cands[i];
-            out = v;
-            return true;
-        }
-    }
-    return false;
+    if (!ptr_sane(node)) return false;
+    if (!read_val(node + off::m_vecAbsOrigin, out)) return false;
+    return world_pos_plausible(out);
 }
 
 static uintptr_t pick_bone_array(uintptr_t ms) {
@@ -229,7 +227,7 @@ static uintptr_t pick_bone_array(uintptr_t ms) {
     if (bone_off >= 0) {
         uintptr_t ba = 0;
         if (read_val(ms + (uintptr_t)bone_off, ba) && ptr_sane(ba)) return ba;
-        return 0;
+        bone_off = -1; // Re-evaluate candidates after entity/model changes.
     }
 
     for (int i = 0; i < 8; i++) {
@@ -1403,23 +1401,19 @@ static void esp_render(float sw, float sh) {
     if (local_team != 2 && local_team != 3) return;
 
     uintptr_t ident_base = ent_sys + off::ENTITY_IDENTITIES;
-    int null_run = 0;
 
     for (int i = 0; i < off::MAX_ENTITIES; i++) {
         uintptr_t identity = 0;
-        if (!read_val(ident_base + i * sizeof(uintptr_t), identity) || !ptr_sane(identity)) {
-            if (++null_run > 64) break;
+        if (!read_val(ident_base + i * sizeof(uintptr_t), identity) || !ptr_sane(identity))
             continue;
-        }
-        null_run = 0;
 
         uintptr_t pawn = resolve_instance(identity, local);
         if (!pawn) continue;
 
         int hp = 0;
         uint8_t team = 0;
-        if (!read_val(pawn + off::m_iHealth, hp)) continue;
-        if (!read_val(pawn + off::m_iTeamNum, team)) continue;
+        if (!read_val(pawn + off::m_iHealth, hp) || hp < 1 || hp > 100) continue;
+        if (!read_val(pawn + off::m_iTeamNum, team) || (team != 2 && team != 3)) continue;
         if (g_cfg.teamcheck && team == local_team) continue;
 
         uintptr_t node = 0;
@@ -1434,9 +1428,13 @@ static void esp_render(float sw, float sh) {
         if (!world_to_screen(origin, feet_s, vm, sw, sh)) continue;
 
         float h = feet_s.y - head_s.y;
-        if (h < 4.f || h > sh * 2.f) continue;
+        if (!std::isfinite(h) || h < 4.f || h > sh * 2.f) continue;
 
-        float w  = h * 0.4f;
+        const float w = h * 0.4f;
+        if (head_s.x + w < 0.f || head_s.x - w > sw ||
+            feet_s.y < 0.f || head_s.y > sh)
+            continue;
+
         float bx = head_s.x - w * 0.5f;
 
         uint32_t col = (team == local_team)
