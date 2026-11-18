@@ -8,6 +8,8 @@
 #include <fstream>
 #include <algorithm>
 #include <cwchar>
+#include <mutex>
+#include <ctime>
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -38,7 +40,40 @@ bool g_hover_inject = false;
 std::wstring g_status = L"Ready when you are";
 std::wstring g_detail = L"CS2 will launch automatically if it is not running.";
 int g_progress = 0;
+
 int g_state = 0; // 0 neutral, 1 success, 2 error
+
+std::mutex g_log_mutex;
+std::wstring log_path() { return exe_dir() + L"last_run.txt"; }
+
+void log_event(const std::wstring& message) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    std::wofstream file(log_path(), std::ios::app);
+    if (!file) return;
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    file << L"[" << now.wYear << L"-";
+    file.width(2); file.fill(L'0'); file << now.wMonth << L"-";
+    file.width(2); file << now.wDay << L" ";
+    file.width(2); file << now.wHour << L":";
+    file.width(2); file << now.wMinute << L":";
+    file.width(2); file << now.wSecond << L"] ";
+    file << message << L"\\r\\n";
+}
+
+void begin_log() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    std::wofstream file(log_path(), std::ios::trunc);
+    if (!file) return;
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    file << L"VOID Injector — last run\\r\\n";
+    file << L"Started: " << now.wYear << L"-" << now.wMonth << L"-"
+         << now.wDay << L" " << now.wHour << L":" << now.wMinute
+         << L":" << now.wSecond << L"\\r\\n";
+    file << L"----------------------------------------\\r\\n";
+}
+
 
 struct UiUpdate {
     std::wstring status;
@@ -83,8 +118,10 @@ std::wstring find_cs2() {
     if (root.empty()) return {};
 
     const std::wstring direct = root + CS2_REL;
-    if (GetFileAttributesW(direct.c_str()) != INVALID_FILE_ATTRIBUTES)
+    if (GetFileAttributesW(direct.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        log_event(L"CS2 executable found in default Steam library.");
         return direct;
+    }
 
     std::ifstream vdf(root + L"\\steamapps\\libraryfolders.vdf");
     std::string line;
@@ -157,11 +194,16 @@ bool module_loaded(DWORD pid, const wchar_t* module) {
 
 bool launch_via_steam() {
     const std::wstring root = steam_root();
-    if (root.empty()) return false;
+    if (root.empty()) {
+        log_event(L"ERROR: Steam install path was not found in the current-user registry.");
+        return false;
+    }
 
     const std::wstring steam_exe = root + L"\\steam.exe";
-    if (GetFileAttributesW(steam_exe.c_str()) == INVALID_FILE_ATTRIBUTES)
+    if (GetFileAttributesW(steam_exe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        log_event(L"ERROR: steam.exe was not found at the registered Steam path.");
         return false;
+    }
 
     STARTUPINFOW si{};
     si.cb = sizeof(si);
@@ -171,8 +213,12 @@ bool launch_via_steam() {
     buffer.push_back(L'\0');
 
     if (!CreateProcessW(nullptr, buffer.data(), nullptr, nullptr, FALSE, 0,
-                        nullptr, root.c_str(), &si, &pi))
+                        nullptr, root.c_str(), &si, &pi)) {
+        const DWORD err = GetLastError();
+        log_event(L"ERROR: CreateProcessW for Steam failed. Win32 error=" + std::to_wstring(err));
         return false;
+    }
+    log_event(L"Steam launch request accepted (AppID 730).");
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -181,8 +227,11 @@ bool launch_via_steam() {
 
 // Uses the same standard LoadLibrary-based DLL loading method as the original injector.
 bool inject_existing_dll(DWORD pid, const std::wstring& dll, std::wstring& error) {
+    log_event(L"Attempting standard Windows DLL load. CS2 PID=" + std::to_wstring(pid));
     HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
     if (!process) {
+        const DWORD err = GetLastError();
+        log_event(L"ERROR: OpenProcess failed. Win32 error=" + std::to_wstring(err));
         error = L"Could not open CS2 process. Try running the launcher as administrator.";
         return false;
     }
@@ -191,13 +240,17 @@ bool inject_existing_dll(DWORD pid, const std::wstring& dll, std::wstring& error
     void* remote_path = VirtualAllocEx(process, nullptr, bytes,
                                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!remote_path) {
+        const DWORD err = GetLastError();
+        log_event(L"ERROR: VirtualAllocEx failed. Win32 error=" + std::to_wstring(err));
         error = L"Could not allocate memory in CS2 (error " +
-                std::to_wstring(GetLastError()) + L").";
+                std::to_wstring(err) + L").";
         CloseHandle(process);
         return false;
     }
 
     if (!WriteProcessMemory(process, remote_path, dll.c_str(), bytes, nullptr)) {
+        const DWORD err = GetLastError();
+        log_event(L"ERROR: WriteProcessMemory failed. Win32 error=" + std::to_wstring(err));
         error = L"Could not write the DLL path into CS2.";
         VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
         CloseHandle(process);
@@ -210,6 +263,8 @@ bool inject_existing_dll(DWORD pid, const std::wstring& dll, std::wstring& error
         process, nullptr, 0, load_library, remote_path, 0, nullptr) : nullptr;
 
     if (!thread) {
+        const DWORD err = GetLastError();
+        log_event(L"ERROR: CreateRemoteThread failed. Win32 error=" + std::to_wstring(err));
         error = L"Windows could not start the DLL loader thread.";
         VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
         CloseHandle(process);
@@ -225,6 +280,8 @@ bool inject_existing_dll(DWORD pid, const std::wstring& dll, std::wstring& error
     CloseHandle(process);
 
     if (wait != WAIT_OBJECT_0 || exit_code == 0) {
+        log_event(L"ERROR: DLL load thread did not report success. Wait result=" +
+                  std::to_wstring(wait) + L", thread exit code=" + std::to_wstring(exit_code));
         error = L"Windows did not confirm that the DLL loaded successfully.";
         return false;
     }
@@ -232,8 +289,11 @@ bool inject_existing_dll(DWORD pid, const std::wstring& dll, std::wstring& error
 }
 
 void run_inject() {
+    log_event(L"Run started.");
     const std::wstring dll = exe_dir() + L"void_internal.dll";
+    log_event(L"Expected DLL path: " + dll);
     if (GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        log_event(L"ERROR: void_internal.dll is missing beside the injector.");
         post_update(L"DLL file not found",
                     L"Place void_internal.dll in the same folder as this launcher.",
                     0, 2, true);
@@ -241,13 +301,16 @@ void run_inject() {
     }
 
     DWORD pid = find_pid(L"cs2.exe");
+    if (pid) log_event(L"CS2 already running. PID=" + std::to_wstring(pid));
     if (!pid) {
+        log_event(L"CS2 process not found; checking Steam installation.");
         post_update(L"Looking for Counter-Strike 2",
                     L"Checking your Steam installation...",
                     8, 0);
 
         const std::wstring game_path = find_cs2();
         if (game_path.empty()) {
+            log_event(L"ERROR: CS2 executable not found in detected Steam libraries.");
             post_update(L"CS2 installation not found",
                         L"Install CS2 through Steam, then try again.",
                         0, 2, true);
@@ -259,6 +322,7 @@ void run_inject() {
                     14, 0);
 
         if (!launch_via_steam()) {
+            log_event(L"ERROR: Could not start CS2 through Steam.");
             post_update(L"Could not launch Steam",
                         L"Start Steam once, sign in, and press INJECT again.",
                         0, 2, true);
@@ -276,12 +340,14 @@ void run_inject() {
         }
 
         if (!pid) {
+            log_event(L"ERROR: cs2.exe process did not appear within 90 seconds.");
             post_update(L"CS2 did not start",
                         L"The game process was not detected within 90 seconds.",
                         0, 2, true);
             return;
         }
 
+        log_event(L"CS2 process detected. PID=" + std::to_wstring(pid));
         post_update(L"Preparing the game",
                     L"CS2 is running. Waiting for its startup to finish...",
                     72, 0);
@@ -293,6 +359,7 @@ void run_inject() {
     }
 
     if (module_loaded(pid, L"void_internal.dll")) {
+        log_event(L"void_internal.dll is already listed in the target process modules.");
         post_update(L"Already loaded",
                     L"void_internal.dll is already present in the CS2 process.",
                     100, 1, true);
@@ -305,10 +372,12 @@ void run_inject() {
 
     std::wstring error;
     if (!inject_existing_dll(pid, dll, error)) {
+        log_event(L"FAILED: " + error);
         post_update(L"Load failed", error, 0, 2, true);
         return;
     }
 
+    log_event(L"SUCCESS: Windows reported the DLL loader thread completed successfully.");
     post_update(L"Load completed",
                 L"Windows reported that the DLL was loaded. You can return to the game.",
                 100, 1, true);
@@ -482,6 +551,8 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
             return 0;
         }
         if (x >= 28 && x <= 562 && y >= 383 && y <= 433 && !g_busy) {
+            begin_log();
+            log_event(L"INJECT button clicked.");
             g_busy = true;
             g_state = 0;
             g_progress = 2;
@@ -494,6 +565,8 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
                 nullptr, 0, nullptr);
             if (thread) CloseHandle(thread);
             else {
+                log_event(L"ERROR: Could not create worker thread. Win32 error=" +
+                          std::to_wstring(GetLastError()));
                 g_busy = false;
                 g_state = 2;
                 g_status = L"Could not start task";
