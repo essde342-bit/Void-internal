@@ -186,7 +186,7 @@ public sealed class InjectorService
         try
         {
             var contents = File.ReadAllText(libraryFile);
-            var matches = Regex.Matches(contents, "\"path\"\s+\"(?<path>[^\"]+)\"");
+            var matches = Regex.Matches(contents, @"""path""\s+""(?<path>[^""]+)""");
             foreach (Match match in matches)
             {
                 var library = match.Groups["path"].Value.Replace(@"\\", @"\");
