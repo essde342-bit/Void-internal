@@ -3,39 +3,89 @@ name: Build Void Internal
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
-      - name: Generate Windows app icon from the original logo
+      - name: Generate Windows app icon
         shell: pwsh
         run: ./scripts/Generate-AppIcon.ps1
 
-      - name: Configure native components
-        run: cmake -B build -A x64
+      - name: Configure native module
+        run: cmake -S . -B build -A x64
 
-      - name: Build native components
-        run: cmake --build build --config Release
+      - name: Build DLL
+        run: cmake --build build --config Release --target void_internal
 
-      - name: Publish WinUI 3 application
-        run: dotnet publish src/VoidInjector.App/VoidInjector.App.csproj -c Release -r win-x64 --self-contained true -o publish/VoidInjector
+      - name: Publish single-file WinUI injector
+        run: >
+          dotnet publish src/VoidInjector.App/VoidInjector.App.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -o publish/VoidInjector
+          -p:PublishSingleFile=true
+          -p:IncludeAllContentForSelfExtract=true
+          -p:WindowsAppSDKSelfContained=true
+          -p:WindowsPackageType=None
+          -p:EnableMsixTooling=true
+          -p:PublishTrimmed=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
 
-      - name: Bundle native module
+      - name: Prepare exactly two release files
         shell: pwsh
-        run: Copy-Item build/Release/void_internal.dll publish/VoidInjector/void_internal.dll
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $PWD 'release-files'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-      - name: Upload
-        uses: actions/upload-artifact@v4
+          $exe = Join-Path $PWD 'publish/VoidInjector/VoidInjector.exe'
+          $dll = Join-Path $PWD 'build/Release/void_internal.dll'
+
+          if (!(Test-Path $exe)) { throw "Missing WinUI executable: $exe" }
+          if (!(Test-Path $dll)) { throw "Missing native DLL: $dll" }
+
+          Copy-Item $exe (Join-Path $stage 'VoidInjector.exe') -Force
+          Copy-Item $dll (Join-Path $stage 'void_internal.dll') -Force
+
+          $files = @(Get-ChildItem -File $stage)
+          if ($files.Count -ne 2) {
+            throw "Expected exactly 2 files, found $($files.Count)"
+          }
+
+          Get-ChildItem -File $stage | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Publish two direct-download release assets
+        uses: softprops/action-gh-release@v2
         with:
-          name: Void-Injector-WinUI
-          path: publish/VoidInjector/**
+          tag_name: latest
+          name: Void Internal — Latest Build
+          body: |
+            Latest successful Windows x64 build.
+
+            Download the two files separately:
+            - VoidInjector.exe
+            - void_internal.dll
+
+            Keep both files in the same folder before launching the injector.
+          target_commitish: ${{ github.sha }}
+          files: |
+            release-files/VoidInjector.exe
+            release-files/void_internal.dll
+          overwrite_files: true
+          make_latest: true
+          fail_on_unmatched_files: true
