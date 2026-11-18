@@ -1,5 +1,5 @@
-
 // Void Internal — CS2 internal ESP. Flip+blt vtable hook, self-validating reads.
+// Offsets from sezzyaep/CS2-OFFSETS dump 18.11.2026.
 #include <Windows.h>
 #include <d3d11.h>
 #include <d3d11_3.h>
@@ -33,25 +33,48 @@ static void vlog(const char* fmt, ...) {
 }
 
 // ---------------------------------------------------------------------------
-// Offsets (dump 12.11.2026). Помечено: [V] verified из дампа, [?] не проверено.
-// Для origin/bonearray — авто-подбор кандидатов с валидацией + лог.
+// Offsets (dump 18.11.2026 sezzyaep).
+// [V] = verified из дампа, [?] = автоподбор рантаймом
 // ---------------------------------------------------------------------------
 namespace off {
-    constexpr uintptr_t dwEntityList          = 0x2709010; // [V]
-    constexpr uintptr_t dwLocalPlayerPawn     = 0x2553D38; // [V]
-    constexpr uintptr_t dwViewMatrix          = 0x2559640; // [V]
+    // Глобалы client.dll
+    constexpr uintptr_t dwEntityList            = 0x270C680; // 40945280 [V]
+    constexpr uintptr_t dwLocalPlayerController = 0x252ED78; // 38989176 [V]
+    constexpr uintptr_t dwLocalPlayerPawn       = 0x2557538; // 39155000 [V]
+    constexpr uintptr_t dwViewMatrix            = 0x255CE50; // 39177808 [V]
 
-    constexpr uintptr_t m_iHealth             = 0x34C;     // [V]
-    constexpr uintptr_t m_lifeState           = 0x354;     // [V]
-    constexpr uintptr_t m_pGameSceneNode      = 0x330;     // [V]
-    constexpr uintptr_t m_iTeamNum            = 0x3E7;     // [V]
-    constexpr uintptr_t m_hOriginalController = 0x1560;    // [V]
-    constexpr uintptr_t m_hPawn               = 0x6BC;     // [V]
-    constexpr uintptr_t m_iszPlayerName       = 0x6FC;     // [V]
-    constexpr uintptr_t m_modelState          = 0x140;     // [V]
+    // C_BaseEntity
+    constexpr uintptr_t m_iHealth               = 0x34C;     // 844  [V]
+    constexpr uintptr_t m_lifeState             = 0x354;     // 852  [V]
+    constexpr uintptr_t m_pGameSceneNode        = 0x330;     // 816  [V]
+    constexpr uintptr_t m_iTeamNum              = 0x3E7;     // 999  [V]
 
-    constexpr uintptr_t ENTITY_IDENTITIES     = 0x10;
-    constexpr int       MAX_ENTITIES          = 4096;
+    // CGameSceneNode
+    constexpr uintptr_t m_vecAbsOrigin          = 0xC8;      // 200  [V] plain Vector
+    constexpr uintptr_t m_vecOrigin             = 0x80;      // 128  [V] quantized (fallback)
+
+    // CSkeletonInstance (parent: CGameSceneNode)
+    constexpr uintptr_t m_modelState            = 0x140;     // 320  [V]
+
+    // CModelState — m_pBoneArray НЕТ в дампе, подбирается рантаймом из кандидатов.
+    // Доступные поля: m_hModel=0xA0, m_ModelName=0xA8, m_pVPhysicsAggregate=0xE0,
+    //                 m_flRootBoneOffset_xyz=0xE8/0xEC/0xF0, m_MeshGroupMask=0x208
+
+    // CBasePlayerController
+    constexpr uintptr_t m_hPawn                 = 0x6BC;     // 1724 [V]
+    constexpr uintptr_t m_iszPlayerName         = 0x6FC;     // 1788 [V]
+
+    // C_CSPlayerPawnBase
+    constexpr uintptr_t m_hOriginalController   = 0x1560;    // 5472 [V]
+
+    // CEntityIdentity — m_pInstance НЕТ в дампе, подбирается из кандидатов.
+    // Доступные поля: m_name=0x18, m_designerName=0x20, m_flags=0x30,
+    //                 m_worldGroupId=0x38, m_fDataObjectTypes=0x3C, m_PathIndex=0x40,
+    //                 m_pAttributes=0x48, m_pPrev=0x50, m_pNext=0x58,
+    //                 m_pPrevByClass=0x60, m_pNextByClass=0x68
+
+    constexpr uintptr_t ENTITY_IDENTITIES       = 0x10;
+    constexpr int       MAX_ENTITIES            = 4096;
 }
 
 struct Vec3 { float x, y, z; };
@@ -262,7 +285,6 @@ namespace gfx {
         vlog("gfx: shutdown");
     }
 
-    // FIX: flip-model => берём ТЕКУЩИЙ back buffer, а не всегда 0
     static void begin_frame(IDXGISwapChain* swap, float& sw, float& sh) {
         g_verts.clear(); g_batches.clear();
         sw=0.f; sh=0.f;
@@ -364,7 +386,6 @@ namespace gfx {
         memcpy(mp.pData,g_verts.data(),g_verts.size()*sizeof(Vertex));
         g_ctx->Unmap(g_vb,0);
 
-        // FIX: сохраняем стейт игры
         ID3D11RenderTargetView* oRTV=nullptr; ID3D11DepthStencilView* oDSV=nullptr;
         g_ctx->OMGetRenderTargets(1,&oRTV,&oDSV);
         UINT nvp=1; D3D11_VIEWPORT oVP[1]={}; g_ctx->RSGetViewports(&nvp,oVP);
@@ -412,7 +433,6 @@ namespace gfx {
             g_ctx->Draw(b.count,b.start);
         }
 
-        // FIX: возвращаем стейт как был
         g_ctx->OMSetRenderTargets(1,&oRTV,oDSV);
         if(nvp) g_ctx->RSSetViewports(nvp,oVP);
         g_ctx->OMSetBlendState(oBlend,oBF,oMask);
@@ -513,7 +533,7 @@ namespace hk {
 
     static bool install() {
         if (g_hooked) return true;
-        bool a = make_dummy(true);   // flip-model (CS2)
+        bool a = make_dummy(true);   // flip-model (CS2 использует)
         bool b = make_dummy(false);  // blt-model (fallback)
         g_hooked = (a||b);
         if (g_hooked) vlog("hk: install ok, vtables=%d", g_count);
@@ -538,7 +558,7 @@ namespace hk {
 // ESP: авто-подбор origin/bonearray с валидацией + диагностика
 // ---------------------------------------------------------------------------
 static uintptr_t g_client = 0;
-static int  g_origin_off = -1;   // выбранный offset origin (лог один раз)
+static int  g_origin_off = -1;
 static int  g_bone_off   = -1;
 static int  g_diag       = 0;
 
@@ -554,9 +574,10 @@ static bool pawn_ok(uintptr_t p, uintptr_t local) {
     return ptr_sane(*(uintptr_t*)(p+off::m_pGameSceneNode));
 }
 
+// CEntityIdentity::m_pInstance нет в дампе — подбираем из кандидатов
 static uintptr_t resolve_instance(uintptr_t identity, uintptr_t local) {
-    static const uintptr_t cands[3]={0x0,0x70,0x78};
-    for(int i=0;i<3;i++){
+    static const uintptr_t cands[4]={0x0,0x70,0x78,0x80};
+    for(int i=0;i<4;i++){
         uintptr_t p=*(uintptr_t*)(identity+cands[i]);
         if (pawn_ok(p,local)) return p;
     }
@@ -570,9 +591,9 @@ static bool controller_ok(uintptr_t c) {
     return (*(uint32_t*)(c+off::m_hPawn)&0x7FFF) < (uint32_t)off::MAX_ENTITIES;
 }
 
-// FIX: m_vecOrigin(0x80) — квантованный. Пробуем absOrigin первым.
+// m_vecAbsOrigin (0xC8) — primary, m_vecOrigin (0x80, квантованный) — fallback
 static bool read_origin(uintptr_t node, Vec3& out) {
-    static const uintptr_t cands[4]={0xD0,0xC0,0xC8,0x80};
+    static const uintptr_t cands[4]={0xC8,0xD0,0xC0,0x80};
     if (g_origin_off>=0) {
         out=*(Vec3*)(node+(uintptr_t)g_origin_off);
         return world_pos_plausible(out);
@@ -589,14 +610,14 @@ static bool read_origin(uintptr_t node, Vec3& out) {
     return false;
 }
 
-// FIX: bone array offset не был верифицирован — подбираем с проверкой матриц
+// CModelState::m_pBoneArray нет в дампе — расширенный автоподбор
 static uintptr_t pick_bone_array(uintptr_t ms) {
-    static const uintptr_t cands[4]={0x80,0x88,0x90,0x78};
+    static const uintptr_t cands[8]={0x80,0x88,0x90,0x78,0xA0,0xB0,0xC0,0x70};
     if (g_bone_off>=0) {
         uintptr_t ba=*(uintptr_t*)(ms+(uintptr_t)g_bone_off);
         return ptr_sane(ba)?ba:0;
     }
-    for(int i=0;i<4;i++){
+    for(int i=0;i<8;i++){
         uintptr_t ba=*(uintptr_t*)(ms+cands[i]);
         if(!ptr_sane(ba)) continue;
         const float* b=(const float*)ba;
@@ -689,8 +710,8 @@ void esp_render(float sw,float sh) {
             if(cidx<(uint32_t)off::MAX_ENTITIES){
                 uintptr_t cident=ident[cidx];
                 if(ptr_sane(cident)){
-                    static const uintptr_t cc[3]={0x0,0x70,0x78};
-                    for(int k=0;k<3&&name[0]==0;k++){
+                    static const uintptr_t cc[4]={0x0,0x70,0x78,0x80};
+                    for(int k=0;k<4&&name[0]==0;k++){
                         uintptr_t ctl=*(uintptr_t*)(cident+cc[k]);
                         if(!controller_ok(ctl)) continue;
                         const char* nm=(const char*)(ctl+off::m_iszPlayerName);
