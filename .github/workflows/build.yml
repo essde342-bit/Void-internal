@@ -39,6 +39,8 @@ jobs:
           -o publish/VoidInjector
           -p:PublishSingleFile=true
           -p:IncludeAllContentForSelfExtract=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
           -p:WindowsAppSDKSelfContained=true
           -p:WindowsPackageType=None
           -p:EnableMsixTooling=true
@@ -67,7 +69,9 @@ jobs:
             throw "Expected exactly 2 files, found $($files.Count)"
           }
 
-          Get-ChildItem -File $stage | Select-Object Name, Length | Format-Table -AutoSize
+          Get-ChildItem -File $stage |
+            Select-Object Name, @{Name='SizeMB';Expression={[math]::Round($_.Length / 1MB, 2)}} |
+            Format-Table -AutoSize
 
       - name: Publish two direct-download release assets
         uses: softprops/action-gh-release@v2
