@@ -1,6 +1,7 @@
 // Void Injector — custom dark UI
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <commdlg.h>
 #include <windowsx.h>
 #include <TlHelp32.h>
 #include <string>
@@ -12,9 +13,10 @@
 #include <ctime>
 
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "comdlg32.lib")
 
 namespace {
-constexpr int WIN_W = 590;
+constexpr int WIN_W = 740;
 constexpr int WIN_H = 455;
 constexpr UINT WM_APP_UPDATE = WM_APP + 10;
 
@@ -37,6 +39,8 @@ HFONT g_font_small = nullptr;
 HFONT g_font_button = nullptr;
 bool g_busy = false;
 bool g_hover_inject = false;
+bool g_hover_download = false;
+int g_page = 0; // 0 Home, 1 Logs
 std::wstring g_status = L"Ready when you are";
 std::wstring g_detail = L"CS2 will launch automatically if it is not running.";
 int g_progress = 0;
@@ -59,7 +63,7 @@ void log_event(const std::wstring& message) {
     file.width(2); file << now.wHour << L":";
     file.width(2); file << now.wMinute << L":";
     file.width(2); file << now.wSecond << L"] ";
-    file << message << L"\\r\\n";
+    file << message << L"\r\n";
 }
 
 void begin_log() {
@@ -71,7 +75,7 @@ void begin_log() {
     file << L"VOID Injector — last run\\r\\n";
     file << L"Started: " << now.wYear << L"-" << now.wMonth << L"-"
          << now.wDay << L" " << now.wHour << L":" << now.wMinute
-         << L":" << now.wSecond << L"\\r\\n";
+         << L":" << now.wSecond << L"\r\n";
     file << L"----------------------------------------\\r\\n";
 }
 
@@ -429,68 +433,145 @@ void paint(HDC dc) {
     FillRect(dc, &whole, bg);
     DeleteObject(bg);
 
-    // Header / brand
-    RECT logo{28, 24, 70, 66};
-    rounded(dc, logo, RGB(39, 31, 65), RGB(70, 57, 111), 12);
-    text(dc, 28, 24, 42, 42, L"V", g_font_logo, ACCENT_H, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    text(dc, 84, 23, 160, 22, L"VOID", g_font_title, TEXT);
-    text(dc, 85, 46, 190, 18, L"CS2  /  INJECTOR", g_font_small, MUTED);
+    // Left navigation
+    RECT sidebar{0, 0, 150, WIN_H};
+    HBRUSH side_brush = CreateSolidBrush(RGB(14, 16, 24));
+    FillRect(dc, &sidebar, side_brush);
+    DeleteObject(side_brush);
+    line(dc, 149, 0, 149, WIN_H, BORDER);
 
-    // Window controls
-    text(dc, 510, 23, 24, 24, L"—", g_font_body, MUTED, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    text(dc, 547, 23, 24, 24, L"×", g_font_body, MUTED, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    line(dc, 28, 82, 562, 82, BORDER);
+    RECT logo{22, 25, 62, 65};
+    rounded(dc, logo, RGB(39, 31, 65), RGB(70, 57, 111), 11);
+    text(dc, 22, 25, 40, 40, L"V", g_font_logo, ACCENT_H,
+         DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    text(dc, 72, 25, 65, 20, L"VOID", g_font_title, TEXT);
+    text(dc, 72, 46, 65, 16, L"INTERNAL", g_font_small, MUTED);
+    line(dc, 18, 84, 132, 84, BORDER);
 
-    text(dc, 30, 99, 510, 35, L"Everything ready?", g_font_title, TEXT);
-    text(dc, 31, 136, 515, 22, L"One click. The launcher takes care of the startup steps.",
+    RECT home_item{12, 105, 138, 151};
+    RECT logs_item{12, 158, 138, 204};
+    rounded(dc, home_item, g_page == 0 ? PANEL2 : RGB(14, 16, 24),
+            g_page == 0 ? BORDER : RGB(14, 16, 24), 9);
+    rounded(dc, logs_item, g_page == 1 ? PANEL2 : RGB(14, 16, 24),
+            g_page == 1 ? BORDER : RGB(14, 16, 24), 9);
+    text(dc, 28, 105, 100, 46, L"Home", g_font_body,
+         g_page == 0 ? TEXT : MUTED);
+    text(dc, 28, 158, 100, 46, L"Logs", g_font_body,
+         g_page == 1 ? TEXT : MUTED);
+    text(dc, 20, 420, 115, 18, L"VOID  •  CS2", g_font_small, MUTED);
+
+    // Main content header
+    text(dc, 176, 25, 400, 24, L"VOID INJECTOR", g_font_title, TEXT);
+    text(dc, 177, 50, 400, 18, L"COUNTER-STRIKE 2  /  X64", g_font_small, MUTED);
+    line(dc, 176, 82, 712, 82, BORDER);
+
+    if (g_page == 1) {
+        text(dc, 178, 108, 480, 34, L"Logs", g_font_title, TEXT);
+        text(dc, 179, 145, 500, 38,
+             L"Download the diagnostic log from your latest run.",
+             g_font_body, MUTED);
+        
+        RECT log_card{176, 202, 712, 348};
+        rounded(dc, log_card, PANEL, BORDER, 15);
+        RECT file_icon{198, 224, 244, 278};
+        rounded(dc, file_icon, PANEL2, BORDER, 9);
+        text(dc, 198, 224, 46, 54, L"TXT", g_font_small, ACCENT_H,
+             DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        text(dc, 263, 225, 390, 24, L"last_run.txt", g_font_body, TEXT);
+        text(dc, 263, 252, 410, 38,
+             L"Contains timestamps, detected errors and the result\nof the latest injector attempt.",
+             g_font_small, MUTED, DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+        RECT button{198, 292, 690, 338};
+        rounded(dc, button, g_hover_download ? ACCENT_H : ACCENT,
+                g_hover_download ? ACCENT_H : ACCENT, 11);
+        text(dc, 198, 292, 492, 46, L"DOWNLOAD", g_font_button,
+             RGB(255, 255, 255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        text(dc, 178, 370, 500, 36,
+             L"The file is saved locally. A new run replaces the previous log.",
+             g_font_small, MUTED, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        return;
+    }
+
+    text(dc, 178, 105, 510, 35, L"Everything ready?", g_font_title, TEXT);
+    text(dc, 179, 141, 515, 22,
+         L"One click. The launcher takes care of the startup steps.",
          g_font_body, MUTED);
 
-    // Main game card
-    RECT card{28, 178, 562, 276};
+    RECT card{176, 178, 712, 276};
     rounded(dc, card, PANEL, BORDER, 16);
-    RECT icon{48, 198, 90, 240};
+    RECT icon{196, 198, 238, 240};
     rounded(dc, icon, PANEL2, BORDER, 10);
-    text(dc, 48, 198, 42, 42, L"CS", g_font_body, TEXT, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    text(dc, 108, 194, 300, 22, L"COUNTER-STRIKE 2", g_font_body, TEXT);
-    text(dc, 108, 218, 340, 20, L"Steam launch  •  x64 process", g_font_small, MUTED);
+    text(dc, 196, 198, 42, 42, L"CS", g_font_body, TEXT,
+         DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    text(dc, 256, 194, 300, 22, L"COUNTER-STRIKE 2", g_font_body, TEXT);
+    text(dc, 256, 218, 340, 20, L"Steam launch  •  x64 process", g_font_small, MUTED);
 
     const COLORREF dot = g_state == 2 ? RED : (g_state == 1 ? GREEN : ACCENT);
     HBRUSH dot_brush = CreateSolidBrush(dot);
     HGDIOBJ old_brush = SelectObject(dc, dot_brush);
     HPEN null_pen = CreatePen(PS_NULL, 0, dot);
     HGDIOBJ old_pen = SelectObject(dc, null_pen);
-    Ellipse(dc, 480, 207, 490, 217);
+    Ellipse(dc, 630, 207, 640, 217);
     SelectObject(dc, old_pen);
     SelectObject(dc, old_brush);
     DeleteObject(null_pen);
     DeleteObject(dot_brush);
-    text(dc, 498, 198, 48, 27,
+    text(dc, 648, 198, 52, 27,
          g_state == 1 ? L"DONE" : (g_state == 2 ? L"ISSUE" : (g_busy ? L"ACTIVE" : L"READY")),
          g_font_small, dot, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    // Status card
-    RECT status_card{28, 290, 562, 365};
+    RECT status_card{176, 290, 712, 365};
     rounded(dc, status_card, PANEL, BORDER, 14);
-    text(dc, 47, 301, 470, 25, g_status, g_font_body, TEXT);
-    text(dc, 47, 328, 485, 22, g_detail, g_font_small, MUTED);
+    text(dc, 195, 301, 490, 25, g_status, g_font_body, TEXT);
+    text(dc, 195, 328, 495, 22, g_detail, g_font_small, MUTED);
 
-    // Progress bar
-    RECT track{47, 353, 543, 359};
+    RECT track{195, 353, 693, 359};
     rounded(dc, track, RGB(37, 42, 55), RGB(37, 42, 55), 5);
     if (g_progress > 0) {
-        RECT fill{47, 353, 47 + (496 * std::clamp(g_progress, 0, 100) / 100), 359};
-        rounded(dc, fill, g_state == 2 ? RED : ACCENT, g_state == 2 ? RED : ACCENT, 5);
+        RECT fill{195, 353, 195 + (498 * std::clamp(g_progress, 0, 100) / 100), 359};
+        rounded(dc, fill, g_state == 2 ? RED : ACCENT,
+                g_state == 2 ? RED : ACCENT, 5);
     }
 
-    // Main action
-    RECT button{28, 383, 562, 433};
+    RECT button{176, 383, 712, 433};
     COLORREF button_color = g_busy ? RGB(70, 57, 105) : (g_hover_inject ? ACCENT_H : ACCENT);
     rounded(dc, button, button_color, button_color, 13);
-    text(dc, 28, 383, 534, 50, g_busy ? L"PLEASE WAIT..." : L"INJECT",
+    text(dc, 176, 383, 536, 50, g_busy ? L"PLEASE WAIT..." : L"INJECT",
          g_font_button, RGB(255, 255, 255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    text(dc, 30, 437, 530, 15, L"Keep this launcher open until the operation finishes.",
+    text(dc, 178, 437, 530, 15,
+         L"Keep this launcher open until the operation finishes.",
          g_font_small, MUTED, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+void download_log() {
+    const std::wstring source = log_path();
+    if (GetFileAttributesW(source.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        MessageBoxW(g_hwnd, L"No log file exists yet. Run the injector first.",
+                    L"VOID Logs", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    wchar_t destination[MAX_PATH] = L"last_run.txt";
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = g_hwnd;
+    dialog.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
+    dialog.lpstrFile = destination;
+    dialog.nMaxFile = MAX_PATH;
+    dialog.lpstrDefExt = L"txt";
+    dialog.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&dialog)) return;
+
+    if (!CopyFileW(source.c_str(), destination, FALSE)) {
+        const DWORD error = GetLastError();
+        MessageBoxW(g_hwnd,
+            (L"Could not save the log. Windows error: " + std::to_wstring(error)).c_str(),
+            L"VOID Logs", MB_OK | MB_ICONERROR);
+        return;
+    }
+    MessageBoxW(g_hwnd, L"Log saved successfully.", L"VOID Logs",
+                MB_OK | MB_ICONINFORMATION);
 }
 
 LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -526,9 +607,11 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         TrackMouseEvent(&track);
         const int x = GET_X_LPARAM(lparam);
         const int y = GET_Y_LPARAM(lparam);
-        const bool hover = (x >= 28 && x <= 562 && y >= 383 && y <= 433);
-        if (hover != g_hover_inject) {
+        const bool hover = (x >= 176 && x <= 712 && y >= 383 && y <= 433);
+        const bool download_hover = (g_page == 1 && x >= 198 && x <= 690 && y >= 292 && y <= 338);
+        if (hover != g_hover_inject || download_hover != g_hover_download) {
             g_hover_inject = hover;
+            g_hover_download = download_hover;
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
@@ -536,6 +619,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
 
     case WM_MOUSELEAVE:
         g_hover_inject = false;
+        g_hover_download = false;
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
@@ -543,15 +627,29 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         const int x = GET_X_LPARAM(lparam);
         const int y = GET_Y_LPARAM(lparam);
 
-        if (y < 58 && x >= 500 && x < 540) {
+        if (x >= 12 && x <= 138 && y >= 105 && y <= 151) {
+            g_page = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (x >= 12 && x <= 138 && y >= 158 && y <= 204) {
+            g_page = 1;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (g_page == 1 && x >= 198 && x <= 690 && y >= 292 && y <= 338) {
+            download_log();
+            return 0;
+        }
+        if (y < 58 && x >= 650 && x < 690) {
             ShowWindow(hwnd, SW_MINIMIZE);
             return 0;
         }
-        if (y < 58 && x >= 540) {
+        if (y < 58 && x >= 690) {
             if (!g_busy) DestroyWindow(hwnd);
             return 0;
         }
-        if (x >= 28 && x <= 562 && y >= 383 && y <= 433 && !g_busy) {
+        if (g_page == 0 && x >= 176 && x <= 712 && y >= 383 && y <= 433 && !g_busy) {
             begin_log();
             log_event(L"INJECT button clicked.");
             g_busy = true;
@@ -583,7 +681,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         if (hit == HTCLIENT) {
             POINT p{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             ScreenToClient(hwnd, &p);
-            if (p.y >= 0 && p.y < 80 && p.x < 500) return HTCAPTION;
+            if (p.y >= 0 && p.y < 80 && p.x >= 150 && p.x < 640) return HTCAPTION;
         }
         return hit;
     }
