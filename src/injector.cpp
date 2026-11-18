@@ -624,8 +624,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = window_proc;
     wc.hInstance = instance;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
     wc.hbrBackground = CreateSolidBrush(BG);
     wc.lpszClassName = CLASS_NAME;
 
