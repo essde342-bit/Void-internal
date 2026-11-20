@@ -1,4 +1,4 @@
-name: Build Void Internal
+name: Build Void Internal DLL
 
 on:
   push:
@@ -19,81 +19,43 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Generate Windows app icon
-        shell: pwsh
-        run: ./scripts/Generate-AppIcon.ps1
-
-      - name: Configure native module
+      - name: Configure DLL
         run: cmake -S . -B build -A x64
 
-      - name: Build DLL
+      - name: Build only the DLL
         run: cmake --build build --config Release --target void_internal
 
-      - name: Publish single-file WinUI injector
-        run: >
-          dotnet publish src/VoidInjector.App/VoidInjector.App.csproj
-          -c Release
-          -r win-x64
-          --self-contained true
-          -o publish/VoidInjector
-          -p:PublishSingleFile=true
-          -p:IncludeAllContentForSelfExtract=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:EnableCompressionInSingleFile=true
-          -p:WindowsAppSDKSelfContained=true
-          -p:WindowsPackageType=None
-          -p:EnableMsixTooling=true
-          -p:PublishTrimmed=false
-          -p:DebugType=None
-          -p:DebugSymbols=false
-
-      - name: Prepare exactly two release files
+      - name: Verify DLL output
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $stage = Join-Path $PWD 'release-files'
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-
-          $exe = Join-Path $PWD 'publish/VoidInjector/VoidInjector.exe'
           $dll = Join-Path $PWD 'build/Release/void_internal.dll'
-
-          if (!(Test-Path $exe)) { throw "Missing WinUI executable: $exe" }
-          if (!(Test-Path $dll)) { throw "Missing native DLL: $dll" }
-
-          Copy-Item $exe (Join-Path $stage 'VoidInjector.exe') -Force
-          Copy-Item $dll (Join-Path $stage 'void_internal.dll') -Force
-
-          $files = @(Get-ChildItem -File $stage)
-          if ($files.Count -ne 2) {
-            throw "Expected exactly 2 files, found $($files.Count)"
+          if (!(Test-Path -LiteralPath $dll)) {
+            throw "DLL was not produced: $dll"
           }
+          Get-Item -LiteralPath $dll |
+            Select-Object Name, Length, FullName |
+            Format-List
 
-          Get-ChildItem -File $stage |
-            Select-Object Name, @{Name='SizeMB';Expression={[math]::Round($_.Length / 1MB, 2)}} |
-            Format-Table -AutoSize
+      - name: Upload DLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: void_internal-dll
+          path: build/Release/void_internal.dll
+          if-no-files-found: error
+          compression-level: 0
 
-      - name: Publish two direct-download release assets
+      - name: Publish DLL release asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Void Internal — Latest Build
+          name: Void Internal — Latest DLL
           body: |
-            Latest successful Windows x64 build.
+            Latest successful Windows x64 DLL build.
 
-            Download the two files separately:
-            - VoidInjector.exe
-            - void_internal.dll
-
-            Keep both files in the same folder before launching the injector.
+            Download: void_internal.dll
           target_commitish: ${{ github.sha }}
-          files: |
-            release-files/VoidInjector.exe
-            release-files/void_internal.dll
+          files: build/Release/void_internal.dll
           overwrite_files: true
           make_latest: true
           fail_on_unmatched_files: true
