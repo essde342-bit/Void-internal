@@ -15,8 +15,14 @@ if (MSVC)
     add_compile_options(/utf-8)
 endif()
 
-add_library(void_internal SHARED src/dllmain.cpp src/menu.cpp)
+# Build only the native DLL. The separate injector executable was removed.
+add_library(void_internal SHARED
+    src/dllmain.cpp
+    src/menu.cpp
+)
+
 target_include_directories(void_internal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 target_link_libraries(void_internal PRIVATE
     d3d11
     dxgi
@@ -24,6 +30,3 @@ target_link_libraries(void_internal PRIVATE
     user32
     gdi32
 )
-
-add_executable(void_injector WIN32 src/injector.cpp)
-target_link_libraries(void_injector PRIVATE advapi32 user32 gdi32)
